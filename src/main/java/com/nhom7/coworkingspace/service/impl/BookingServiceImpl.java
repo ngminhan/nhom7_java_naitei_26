@@ -5,7 +5,9 @@ import com.nhom7.coworkingspace.dto.request.BookingRequest;
 import com.nhom7.coworkingspace.dto.request.BookingSearchRequest;
 import com.nhom7.coworkingspace.dto.response.BookingResponse;
 import com.nhom7.coworkingspace.dto.response.PageResponse;
+import com.nhom7.coworkingspace.dto.response.PaymentResponse;
 import com.nhom7.coworkingspace.entity.Booking;
+import com.nhom7.coworkingspace.entity.Payment;
 import com.nhom7.coworkingspace.entity.Space;
 import com.nhom7.coworkingspace.entity.User;
 import com.nhom7.coworkingspace.enums.BookingStatus;
@@ -14,7 +16,9 @@ import com.nhom7.coworkingspace.enums.SpaceStatus;
 import com.nhom7.coworkingspace.exception.AppException;
 import com.nhom7.coworkingspace.exception.BookingNotFoundException;
 import com.nhom7.coworkingspace.mapper.BookingMapper;
+import com.nhom7.coworkingspace.mapper.PaymentMapper;
 import com.nhom7.coworkingspace.repository.BookingRepository;
+import com.nhom7.coworkingspace.repository.PaymentRepository;
 import com.nhom7.coworkingspace.repository.SpaceRepository;
 import com.nhom7.coworkingspace.repository.UserRepository;
 import com.nhom7.coworkingspace.service.BookingService;
@@ -54,7 +58,9 @@ public class BookingServiceImpl implements BookingService {
     private final BookingRepository bookingRepository;
     private final SpaceRepository spaceRepository;
     private final UserRepository userRepository;
+    private final PaymentRepository paymentRepository;
     private final BookingMapper bookingMapper;
+    private final PaymentMapper paymentMapper;
     private final EmailService emailService;
     private final EmailTemplateService emailTemplateService;
     private final MessageSource messageSource;
@@ -186,6 +192,63 @@ public class BookingServiceImpl implements BookingService {
         Booking savedBooking = bookingRepository.save(booking);
 
         return bookingMapper.toBookingResponse(savedBooking);
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponse payBooking(Long bookingId, String userEmail) {
+        log.debug("[BookingService] Processing payment for bookingId={}, userEmail={}", bookingId, userEmail);
+
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new AppException("user.not.found", HttpStatus.NOT_FOUND));
+
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new BookingNotFoundException(bookingId));
+
+        if (!booking.getUser().getId().equals(user.getId())) {
+            throw new AppException("booking.payment.not.owner", HttpStatus.FORBIDDEN);
+        }
+
+        BookingStatus currentStatus = booking.getStatus();
+        if (currentStatus == BookingStatus.PAID) {
+            throw new AppException("booking.already.paid", HttpStatus.BAD_REQUEST);
+        }
+
+        if (currentStatus != BookingStatus.APPROVED) {
+            throw new AppException("booking.payment.not.approved", HttpStatus.BAD_REQUEST);
+        }
+
+        booking.setStatus(BookingStatus.PAID);
+        Booking savedBooking = bookingRepository.save(booking);
+
+        Payment payment = Payment.builder()
+                .booking(savedBooking)
+                .amount(savedBooking.getTotalPrice())
+                .paymentMethod("MOCK")
+                .status("COMPLETED")
+                .paidAt(LocalDateTime.now(clock))
+                .transactionId("MOCK-" + System.currentTimeMillis() + "-" + savedBooking.getId())
+                .build();
+
+        Payment savedPayment = paymentRepository.save(payment);
+        return paymentMapper.toPaymentResponse(savedPayment);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<BookingResponse> getMyBookingHistory(BookingSearchRequest request, String userEmail) {
+        log.debug("[BookingService] Getting booking history for userEmail={}", userEmail);
+
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new AppException("user.not.found", HttpStatus.NOT_FOUND));
+
+        if (request == null) {
+            request = BookingSearchRequest.builder().build();
+        }
+
+        request.setUserId(user.getId());
+
+        return searchBookings(request);
     }
 
     @Override

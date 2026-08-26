@@ -2,6 +2,7 @@ package com.nhom7.coworkingspace.controller.api;
 
 import com.nhom7.coworkingspace.dto.request.BookingHistoryRequest;
 import com.nhom7.coworkingspace.dto.request.BookingRequest;
+import com.nhom7.coworkingspace.dto.request.BookingSearchRequest;
 import com.nhom7.coworkingspace.dto.response.ApiResponse;
 import com.nhom7.coworkingspace.dto.response.BookingResponse;
 import com.nhom7.coworkingspace.dto.response.PageResponse;
@@ -68,20 +69,27 @@ public class BookingController {
      * @param authentication security context authentication
      * @return paginated list of the current user's bookings wrapped in ApiResponse
      */
+    /**
+     * Get booking history for current authenticated user.
+     *
+     * @param request search and filter criteria
+     * @param authentication security context authentication
+     * @return paginated booking history wrapped in ApiResponse
+     */
     @GetMapping("/my-history")
     @PreAuthorize("hasAnyRole('USER', 'HOST', 'MODERATOR', 'ADMIN')")
     @Operation(
             summary = "Get My Booking History",
-            description = "Allows authenticated users to retrieve the paginated list of bookings they have made."
+            description = "Retrieves paginated booking history for the current authenticated user."
     )
     public ResponseEntity<ApiResponse<PageResponse<BookingResponse>>> getMyBookingHistory(
-            @ParameterObject @ModelAttribute BookingHistoryRequest request,
+            @org.springdoc.core.annotations.ParameterObject @ModelAttribute BookingSearchRequest request,
             Authentication authentication
     ) {
-        PageResponse<BookingResponse> result = bookingService.getMyBookingHistory(authentication.getName(), request);
+        PageResponse<BookingResponse> response = bookingService.getMyBookingHistory(request, authentication.getName());
         Locale locale = LocaleContextHolder.getLocale();
-        String message = messageSource.getMessage("booking.history.fetched", null, locale);
-        return ResponseEntity.ok(ApiResponse.success(result, message));
+        String message = messageSource.getMessage("booking.my_history.fetched", null, locale);
+        return ResponseEntity.ok(ApiResponse.success(HttpStatus.OK.value(), message, response));
     }
 
     /**

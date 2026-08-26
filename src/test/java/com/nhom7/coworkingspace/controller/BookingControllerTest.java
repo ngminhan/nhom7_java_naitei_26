@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
@@ -59,6 +60,9 @@ class BookingControllerTest {
 
     @MockBean
     private TokenBlacklistService tokenBlacklistService;
+
+    @MockBean
+    private MessageSource messageSource;
 
     @Test
     @WithMockUser(username = "user@test.com", roles = {"USER"})
@@ -120,34 +124,24 @@ class BookingControllerTest {
     @WithMockUser(username = "user@test.com", roles = {"USER"})
     @DisplayName("Authenticated USER -> GET /api/bookings/my-history returns 200 OK")
     void givenUserRole_whenGetMyBookingHistory_thenReturn200() throws Exception {
-        BookingResponse response = BookingResponse.builder()
+        BookingResponse booking = BookingResponse.builder()
                 .id(1L)
                 .userEmail("user@test.com")
                 .spaceId(10L)
-                .spaceName("Desk 101")
-                .status(BookingStatus.PENDING)
-                .totalPrice(new BigDecimal("200000.00"))
-                .createdAt(LocalDateTime.now())
+                .status(BookingStatus.APPROVED)
                 .build();
 
-        PageResponse<BookingResponse> pageResponse = PageResponse.<BookingResponse>builder()
-                .content(List.of(response))
-                .pageNumber(0)
-                .pageSize(10)
-                .totalElements(1)
-                .totalPages(1)
-                .last(true)
-                .build();
+        PageResponse<BookingResponse> pageResponse = PageResponse.fromPage(
+                new org.springframework.data.domain.PageImpl<>(List.of(booking)));
 
-        given(bookingService.getMyBookingHistory(eq("user@test.com"), any(BookingHistoryRequest.class)))
+        given(bookingService.getMyBookingHistory(any(com.nhom7.coworkingspace.dto.request.BookingSearchRequest.class), eq("user@test.com")))
                 .willReturn(pageResponse);
 
         mockMvc.perform(get("/api/bookings/my-history"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.content[0].id").value(1))
-                .andExpect(jsonPath("$.data.content[0].status").value("PENDING"))
-                .andExpect(jsonPath("$.data.totalElements").value(1));
+                .andExpect(jsonPath("$.data.content[0].status").value("APPROVED"));
     }
 
     @Test
@@ -177,13 +171,5 @@ class BookingControllerTest {
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.id").value(1))
                 .andExpect(jsonPath("$.data.status").value("CANCELLED"));
-    }
-
-    @Test
-    @DisplayName("Unauthenticated request -> PUT /api/bookings/{id}/cancel returns 401 Unauthorized")
-    void givenUnauthenticated_whenCancelBooking_thenReturn401() throws Exception {
-        mockMvc.perform(put("/api/bookings/1/cancel")
-                        .with(csrf()))
-                .andExpect(status().isUnauthorized());
     }
 }

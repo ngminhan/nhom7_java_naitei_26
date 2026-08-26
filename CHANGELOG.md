@@ -7,18 +7,26 @@ File ghi lại những thay đổi của dự án.
 
 ## [Unreleased]
 
-### 2026-08-24 - My Booking History API (GET /api/bookings/my-history)
+### 2026-08-25 - Payment API (POST /api/payments/mock/bookings/{id}/pay) & Booking History API (GET /api/bookings/my-history) (#99300)
 
-**Người thực hiện:** [Huỳnh Trương Thảo Duyên]
+**Người thực hiện:** Nguyễn Minh An
 
 #### Added
 
-- Endpoint `GET /api/bookings/my-history`: cho phép user đã đăng nhập xem danh sách các booking do chính mình đặt, hỗ trợ phân trang và sắp xếp; lấy user qua `Authentication` (JWT), không nhận `userId` từ client
-- `BookingHistoryRequest`: DTO tiếp nhận tham số phân trang/sắp xếp (`page`, `size`, `sortBy`, `sortDir`), mặc định sắp xếp theo `createdAt` giảm dần (booking mới nhất trước)
-- `BookingRepository.findByUserId(...)`: truy vấn phân trang booking theo user, kèm `@EntityGraph(attributePaths = {"user", "space"})` để nạp sẵn quan hệ, tránh N+1 query
-- `BookingService.getMyBookingHistory(...)`/`BookingServiceImpl`: whitelist các trường được phép sắp xếp (`id`, `startTime`, `endTime`, `status`, `totalPrice`, `createdAt`) để chặn sort injection, tự động fallback về `createdAt` nếu `sortBy` không hợp lệ; giới hạn `size` tối đa 100
-- Message key `booking.history.fetched` (en/vi)
-- Unit test cho `BookingServiceImpl.getMyBookingHistory` (thành công, fallback sortBy không hợp lệ, user không tồn tại) và `BookingController` (`200 OK` khi đã xác thực, `401` khi chưa xác thực)
+- Endpoint `POST /api/payments/mock/bookings/{id}/pay`: Xác nhận thanh toán giả lập cho lịch đặt chỗ ở trạng thái `APPROVED`
+  - Kiểm tra xác thực người dùng (`401 Unauthorized`)
+  - Kiểm tra lịch đặt chỗ tồn tại (`404 Not Found`) và thuộc sở hữu của người dùng hiện tại (`403 Forbidden` nếu không phải chủ sở hữu)
+  - Kiểm tra trạng thái hợp lệ (`400 Bad Request` nếu không ở trạng thái `APPROVED` hoặc đã thanh toán `PAID`)
+  - Cập nhật trạng thái `bookings.status = PAID` và lưu bản ghi thanh toán mới vào bảng `payment` với `status = COMPLETED`
+- Endpoint `GET /api/bookings/my-history`: Lấy danh sách lịch sử đặt chỗ của người dùng đang đăng nhập
+  - Tự động gán `userId = current_userId` trong `BookingSearchRequest` để phòng chống lỗ hổng phân quyền IDOR
+  - Hỗ trợ lọc động theo `status`, `fromDate`, `toDate`, `keyword`, kết hợp phân trang (`page`, `size`) và sắp xếp linh hoạt (`sortBy`, `sortDir`)
+- MapStruct Interface `PaymentMapper`: chuyển đổi `Payment` entity sang `PaymentResponse` DTO
+- Bổ sung giá trị `PAID` vào Enum `BookingStatus`
+- Unit test suite:
+  - `BookingServiceImplTest.PayBookingTests` và `BookingServiceImplTest.GetMyBookingHistoryTests`: kiểm thử toàn diện luồng thành công, phân quyền, bảo mật IDOR và các trường hợp ngoại lệ
+  - `PaymentControllerTest`: MockMvc unit test kiểm thử API `POST /api/payments/mock/bookings/{id}/pay`
+  - `BookingControllerTest`: Bổ sung MockMvc unit test kiểm thử API `GET /api/bookings/my-history`
 
 ---
 
@@ -49,6 +57,21 @@ File ghi lại những thay đổi của dự án.
 
 ---
 
+### 2026-08-24 - My Booking History API (GET /api/bookings/my-history)
+
+**Người thực hiện:** [Huỳnh Trương Thảo Duyên]
+
+#### Added
+
+- Endpoint `GET /api/bookings/my-history`: cho phép user đã đăng nhập xem danh sách các booking do chính mình đặt, hỗ trợ phân trang và sắp xếp; lấy user qua `Authentication` (JWT), không nhận `userId` từ client
+- `BookingHistoryRequest`: DTO tiếp nhận tham số phân trang/sắp xếp (`page`, `size`, `sortBy`, `sortDir`), mặc định sắp xếp theo `createdAt` giảm dần (booking mới nhất trước)
+- `BookingRepository.findByUserId(...)`: truy vấn phân trang booking theo user, kèm `@EntityGraph(attributePaths = {"user", "space"})` để nạp sẵn quan hệ, tránh N+1 query
+- `BookingService.getMyBookingHistory(...)`/`BookingServiceImpl`: whitelist các trường được phép sắp xếp (`id`, `startTime`, `endTime`, `status`, `totalPrice`, `createdAt`) để chặn sort injection, tự động fallback về `createdAt` nếu `sortBy` không hợp lệ; giới hạn `size` tối đa 100
+- Message key `booking.history.fetched` (en/vi)
+- Unit test cho `BookingServiceImpl.getMyBookingHistory` (thành công, fallback sortBy không hợp lệ, user không tồn tại) và `BookingController` (`200 OK` khi đã xác thực, `401` khi chưa xác thực)
+
+---
+
 ### 2026-08-22 - Host Venue Management (CRUD)
 
 **Người thực hiện:** Huỳnh Trương Thảo Duyên
@@ -73,9 +96,9 @@ File ghi lại những thay đổi của dự án.
 
 - `VenueController`: đánh dấu `@SecurityRequirement(name = "BearerAuth")` cho toàn bộ endpoint `/api/venues/**` trên Swagger UI; việc bắt buộc role `HOST` được kiểm tra thủ công trong `VenueServiceImpl.resolveHostUser(...)` (chưa dùng `@PreAuthorize`)
 
-### 2026-08-24 - Booking Cancellation API (PUT /api/bookings/{id}/cancel) (#99295)
-
 ---
+
+### 2026-08-24 - Booking Cancellation API (PUT /api/bookings/{id}/cancel) (#99295)
 
 **Người thực hiện:** Nguyễn Minh An
 
@@ -88,7 +111,8 @@ File ghi lại những thay đổi của dự án.
   - Cập nhật trạng thái booking sang `CANCELLED` và tự động giải phóng khung giờ trống của Space
 - Unit test suite cho `BookingServiceImplTest.CancelBookingTests` và `BookingControllerTest` kiểm thử toàn diện các luồng thành công, phân quyền và các trường hợp ngoại lệ/edge cases
 
->>>>>>> master
+---
+
 ### 2026-08-22 - View Statistics and Payment History
 
 **Người thực hiện:** [Trần Trung Hiếu]

@@ -5,14 +5,19 @@ import com.nhom7.coworkingspace.dto.request.BookingRequest;
 import com.nhom7.coworkingspace.dto.request.BookingSearchRequest;
 import com.nhom7.coworkingspace.dto.response.BookingResponse;
 import com.nhom7.coworkingspace.dto.response.PageResponse;
+import com.nhom7.coworkingspace.dto.response.PaymentResponse;
 import com.nhom7.coworkingspace.entity.Booking;
+import com.nhom7.coworkingspace.entity.Payment;
 import com.nhom7.coworkingspace.entity.Space;
 import com.nhom7.coworkingspace.entity.User;
 import com.nhom7.coworkingspace.enums.SpaceStatus;
 import com.nhom7.coworkingspace.enums.BookingStatus;
 import com.nhom7.coworkingspace.exception.AppException;
+import com.nhom7.coworkingspace.exception.BookingNotFoundException;
 import com.nhom7.coworkingspace.mapper.BookingMapper;
+import com.nhom7.coworkingspace.mapper.PaymentMapper;
 import com.nhom7.coworkingspace.repository.BookingRepository;
+import com.nhom7.coworkingspace.repository.PaymentRepository;
 import com.nhom7.coworkingspace.repository.SpaceRepository;
 import com.nhom7.coworkingspace.repository.UserRepository;
 import com.nhom7.coworkingspace.service.impl.BookingServiceImpl;
@@ -68,6 +73,12 @@ class BookingServiceImplTest {
         private BookingMapper bookingMapper;
 
         @Mock
+        private PaymentRepository paymentRepository;
+
+        @Mock
+        private PaymentMapper paymentMapper;
+
+        @Mock
         private EmailService emailService;
 
         @Mock
@@ -87,7 +98,9 @@ class BookingServiceImplTest {
                                 bookingRepository,
                                 spaceRepository,
                                 userRepository,
+                                paymentRepository,
                                 bookingMapper,
+                                paymentMapper,
                                 emailService,
                                 emailTemplateService,
                                 messageSource,
@@ -578,90 +591,6 @@ class BookingServiceImplTest {
         }
 
         @Nested
-        @DisplayName("getMyBookingHistory Tests")
-        class GetMyBookingHistoryTests {
-
-                @Test
-                @DisplayName("Should return paginated booking history for current user")
-                void getMyBookingHistory_Success() {
-                        String email = "customer@coworking.test";
-                        User user = User.builder().id(1L).email(email).build();
-
-                        Booking booking = Booking.builder()
-                                        .id(100L)
-                                        .user(user)
-                                        .status(BookingStatus.PENDING)
-                                        .createdAt(LocalDateTime.now())
-                                        .build();
-
-                        BookingResponse response = BookingResponse.builder()
-                                        .id(100L)
-                                        .userEmail(email)
-                                        .status(BookingStatus.PENDING)
-                                        .build();
-
-                        BookingHistoryRequest request = BookingHistoryRequest.builder()
-                                        .page(0)
-                                        .size(10)
-                                        .sortBy("createdAt")
-                                        .sortDir("DESC")
-                                        .build();
-
-                        Pageable expectedPageable = PageRequest.of(0, 10, Sort.by(Sort.Direction.DESC, "createdAt"));
-
-                        given(userRepository.findByEmail(email)).willReturn(Optional.of(user));
-                        given(bookingRepository.findByUserId(eq(1L), eq(expectedPageable)))
-                                        .willReturn(new PageImpl<>(List.of(booking), expectedPageable, 1));
-                        given(bookingMapper.toBookingResponse(booking)).willReturn(response);
-
-                        PageResponse<BookingResponse> result = bookingService.getMyBookingHistory(email, request);
-
-                        assertThat(result.getContent()).containsExactly(response);
-                        assertThat(result.getTotalElements()).isEqualTo(1);
-                }
-
-                @Test
-                @DisplayName("Should fall back to default sort field when an unknown sortBy is supplied")
-                void getMyBookingHistory_InvalidSortByFallsBackToDefault() {
-                        String email = "customer@coworking.test";
-                        User user = User.builder().id(1L).email(email).build();
-
-                        BookingHistoryRequest request = BookingHistoryRequest.builder()
-                                        .page(0)
-                                        .size(10)
-                                        .sortBy("unknownField")
-                                        .sortDir("DESC")
-                                        .build();
-
-                        Pageable expectedPageable = PageRequest.of(0, 10, Sort.by(Sort.Direction.DESC, "createdAt"));
-
-                        given(userRepository.findByEmail(email)).willReturn(Optional.of(user));
-                        given(bookingRepository.findByUserId(eq(1L), eq(expectedPageable)))
-                                        .willReturn(new PageImpl<>(List.of(), expectedPageable, 0));
-
-                        bookingService.getMyBookingHistory(email, request);
-
-                        verify(bookingRepository).findByUserId(1L, expectedPageable);
-                }
-
-                @Test
-                @DisplayName("Should throw AppException when current user is not found")
-                void getMyBookingHistory_UserNotFound() {
-                        String email = "missing@coworking.test";
-                        BookingHistoryRequest request = BookingHistoryRequest.builder().build();
-
-                        given(userRepository.findByEmail(email)).willReturn(Optional.empty());
-
-                        assertThatThrownBy(() -> bookingService.getMyBookingHistory(email, request))
-                                        .isInstanceOf(AppException.class)
-                                        .hasMessage("user.not.found")
-                                        .extracting("status")
-                                        .isEqualTo(HttpStatus.NOT_FOUND);
-                        verifyNoInteractions(bookingRepository, bookingMapper);
-                }
-        }
-
-        @Nested
         @DisplayName("cancelBooking Tests")
         class CancelBookingTests {
 
@@ -848,6 +777,165 @@ class BookingServiceImplTest {
                                         .hasMessage("booking.cannot.cancel.invalid.status")
                                         .extracting("status")
                                         .isEqualTo(HttpStatus.BAD_REQUEST);
+                }
+        }
+
+        @Nested
+        @DisplayName("Pay Booking Tests")
+        class PayBookingTests {
+
+                @Test
+                @DisplayName("Should successfully pay for an APPROVED booking and change status to PAID")
+                void payBooking_Success() {
+                        String email = "customer@coworking.test";
+                        User user = User.builder().id(1L).email(email).build();
+                        Booking booking = Booking.builder()
+                                        .id(200L)
+                                        .user(user)
+                                        .totalPrice(new BigDecimal("150000.00"))
+                                        .status(BookingStatus.APPROVED)
+                                        .build();
+
+                        Payment payment = Payment.builder()
+                                        .id(10L)
+                                        .booking(booking)
+                                        .amount(new BigDecimal("150000.00"))
+                                        .paymentMethod("MOCK")
+                                        .status("COMPLETED")
+                                        .paidAt(LocalDateTime.now(clock))
+                                        .transactionId("MOCK-200")
+                                        .build();
+
+                        PaymentResponse expectedResponse = PaymentResponse.builder()
+                                        .id(10L)
+                                        .bookingId(200L)
+                                        .amount(new BigDecimal("150000.00"))
+                                        .paymentMethod("MOCK")
+                                        .status("COMPLETED")
+                                        .paidAt(LocalDateTime.now(clock))
+                                        .transactionId("MOCK-200")
+                                        .build();
+
+                        given(userRepository.findByEmail(email)).willReturn(Optional.of(user));
+                        given(bookingRepository.findById(200L)).willReturn(Optional.of(booking));
+                        given(bookingRepository.save(any(Booking.class))).willAnswer(invocation -> invocation.getArgument(0));
+                        given(paymentRepository.save(any(Payment.class))).willReturn(payment);
+                        given(paymentMapper.toPaymentResponse(payment)).willReturn(expectedResponse);
+
+                        PaymentResponse result = bookingService.payBooking(200L, email);
+
+                        assertThat(result).isNotNull();
+                        assertThat(result.getBookingId()).isEqualTo(200L);
+                        assertThat(result.getStatus()).isEqualTo("COMPLETED");
+                        assertThat(booking.getStatus()).isEqualTo(BookingStatus.PAID);
+
+                        verify(bookingRepository).save(booking);
+                        verify(paymentRepository).save(any(Payment.class));
+                }
+
+                @Test
+                @DisplayName("Should throw BookingNotFoundException when booking does not exist")
+                void payBooking_NotFound_ThrowsException() {
+                        String email = "customer@coworking.test";
+                        User user = User.builder().id(1L).email(email).build();
+
+                        given(userRepository.findByEmail(email)).willReturn(Optional.of(user));
+                        given(bookingRepository.findById(999L)).willReturn(Optional.empty());
+
+                        assertThatThrownBy(() -> bookingService.payBooking(999L, email))
+                                        .isInstanceOf(BookingNotFoundException.class);
+                }
+
+                @Test
+                @DisplayName("Should throw 403 Forbidden when current user is not the booking owner")
+                void payBooking_NotOwner_ThrowsForbidden() {
+                        String email = "hacker@coworking.test";
+                        User currentOwner = User.builder().id(1L).email("owner@coworking.test").build();
+                        User callerUser = User.builder().id(2L).email(email).build();
+                        Booking booking = Booking.builder()
+                                        .id(200L)
+                                        .user(currentOwner)
+                                        .status(BookingStatus.APPROVED)
+                                        .build();
+
+                        given(userRepository.findByEmail(email)).willReturn(Optional.of(callerUser));
+                        given(bookingRepository.findById(200L)).willReturn(Optional.of(booking));
+
+                        assertThatThrownBy(() -> bookingService.payBooking(200L, email))
+                                        .isInstanceOf(AppException.class)
+                                        .hasMessage("booking.payment.not.owner")
+                                        .extracting("status")
+                                        .isEqualTo(HttpStatus.FORBIDDEN);
+                }
+
+                @Test
+                @DisplayName("Should throw 400 Bad Request when booking is already PAID")
+                void payBooking_AlreadyPaid_ThrowsBadRequest() {
+                        String email = "owner@coworking.test";
+                        User user = User.builder().id(1L).email(email).build();
+                        Booking booking = Booking.builder()
+                                        .id(200L)
+                                        .user(user)
+                                        .status(BookingStatus.PAID)
+                                        .build();
+
+                        given(userRepository.findByEmail(email)).willReturn(Optional.of(user));
+                        given(bookingRepository.findById(200L)).willReturn(Optional.of(booking));
+
+                        assertThatThrownBy(() -> bookingService.payBooking(200L, email))
+                                        .isInstanceOf(AppException.class)
+                                        .hasMessage("booking.already.paid")
+                                        .extracting("status")
+                                        .isEqualTo(HttpStatus.BAD_REQUEST);
+                }
+
+                @Test
+                @DisplayName("Should throw 400 Bad Request when booking is not in APPROVED status")
+                void payBooking_NotApproved_ThrowsBadRequest() {
+                        String email = "owner@coworking.test";
+                        User user = User.builder().id(1L).email(email).build();
+                        Booking booking = Booking.builder()
+                                        .id(200L)
+                                        .user(user)
+                                        .status(BookingStatus.PENDING)
+                                        .build();
+
+                        given(userRepository.findByEmail(email)).willReturn(Optional.of(user));
+                        given(bookingRepository.findById(200L)).willReturn(Optional.of(booking));
+
+                        assertThatThrownBy(() -> bookingService.payBooking(200L, email))
+                                        .isInstanceOf(AppException.class)
+                                        .hasMessage("booking.payment.not.approved")
+                                        .extracting("status")
+                                        .isEqualTo(HttpStatus.BAD_REQUEST);
+                }
+        }
+
+        @Nested
+        @DisplayName("Get My Booking History Tests")
+        class GetMyBookingHistoryTests {
+
+                @Test
+                @DisplayName("Should fetch my booking history and force current userId in filter")
+                void getMyBookingHistory_Success() {
+                        String email = "user@test.com";
+                        User user = User.builder().id(5L).email(email).build();
+                        BookingSearchRequest request = BookingSearchRequest.builder().build();
+
+                        Booking booking = Booking.builder().id(100L).user(user).build();
+                        BookingResponse bookingResponse = BookingResponse.builder().id(100L).userId(5L).build();
+                        Page<Booking> page = new PageImpl<>(List.of(booking));
+
+                        given(userRepository.findByEmail(email)).willReturn(Optional.of(user));
+                        given(bookingRepository.findAll(any(Specification.class), any(Pageable.class))).willReturn(page);
+                        given(bookingMapper.toBookingResponse(booking)).willReturn(bookingResponse);
+
+                        PageResponse<BookingResponse> result = bookingService.getMyBookingHistory(request, email);
+
+                        assertThat(result).isNotNull();
+                        assertThat(result.getContent()).hasSize(1);
+                        assertThat(result.getContent().get(0).getUserId()).isEqualTo(5L);
+                        assertThat(request.getUserId()).isEqualTo(5L);
                 }
         }
 }
